@@ -1,0 +1,61 @@
+name: Update Copilot Formula
+
+on:
+  schedule:
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'New copilot version (e.g., 0.0.348)'
+        required: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout your tap
+        uses: actions/checkout@v4
+        with:
+          repository: 'thoom/homebrew-copilot-cli'
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Set up Homebrew
+        id: set-up-homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Get new tarball info
+        id: npm
+        run: |
+          if [ "${{ github.event_name }}" == "schedule" ]; then
+            VERSION=$(npm view @github/copilot version)
+          else
+            VERSION=${{ github.event.inputs.version }}
+          fi
+          URL=$(npm view @github/copilot@$VERSION dist.tarball)
+          SHA=$(curl -sL $URL | shasum -a 256 | cut -d' ' -f1)
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Update formula file
+        run: |
+          # Get current version from formula
+          CURRENT_VERSION=$(grep 'version "' copilot-cli.rb | cut -d'"' -f2)
+
+          if [ "$CURRENT_VERSION" != "${{ steps.npm.outputs.version }}" ]; then
+            sed -i -e 's|url ".*"|url "${{ steps.npm.outputs.url }}"|' \
+                   -e 's|sha256 ".*"|sha256 "${{ steps.npm.outputs.sha }}"|' \
+                   -e 's|version ".*"|version "${{ steps.npm.outputs.version }}"|' \
+                   copilot-cli.rb
+          else
+            echo "Formula is already up-to-date."
+            exit 0
+          fi
+
+      - name: Commit changes
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add copilot-cli.rb
+          git commit -m "copilot: update to ${{ steps.npm.outputs.version }}"
+          git push
