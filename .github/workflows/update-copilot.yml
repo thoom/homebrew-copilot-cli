@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout your tap
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
         
       - name: Set up Homebrew
         id: set-up-homebrew
@@ -50,9 +52,12 @@ jobs:
           fi
 
       - name: Commit changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}"
           git add copilot-cli.rb
           git commit -m "copilot: update to ${{ steps.npm.outputs.version }}"
           git push origin HEAD
