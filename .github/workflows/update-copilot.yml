@@ -55,4 +55,4 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add copilot-cli.rb
           git commit -m "copilot: update to ${{ steps.npm.outputs.version }}"
-          git push
+          git push origin HEAD
