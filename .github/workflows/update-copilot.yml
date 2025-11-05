@@ -128,6 +128,7 @@ jobs:
         with:
           pattern: bottle-*
           path: bottles
+          merge-multiple: true
 
       - name: Extract bottle info and update formula
         run: |
@@ -141,6 +142,7 @@ jobs:
           
           # Add checksums from each platform
           found_json=0
+          shopt -s nullglob
           for JSON_FILE in bottles/bottle-*/*.bottle.json; do
             if [ -f "$JSON_FILE" ]; then
               found_json=1
@@ -150,14 +152,20 @@ jobs:
               
               # Extract platform tag and sha256 from JSON using explicit paths
               TAG=$(jq -r --arg key "$TOP_KEY" '.[$key].bottle.tags | keys[0]' "$JSON_FILE")
-              SHA=$(jq -r --arg key "$TOP_KEY" '.[$key].bottle.tags[] | .sha256' "$JSON_FILE")
+              SHA=$(jq -r --arg key "$TOP_KEY" --arg tag "$TAG" '.[$key].bottle.tags[$tag].sha256' "$JSON_FILE")
+              
+              # Validate extraction succeeded
+              if [ -z "$TAG" ] || [ -z "$SHA" ]; then
+                echo "Error: Failed to extract bottle info from $JSON_FILE (TAG='$TAG', SHA='$SHA')" >&2
+                exit 1
+              fi
               
               BOTTLE_BLOCK="${BOTTLE_BLOCK}\n    sha256 cellar: :any_skip_relocation, ${TAG}: \"${SHA}\""
             fi
           done
           
           if [ "$found_json" -eq 0 ]; then
-            echo "Warning: No .bottle.json file found in $dir" >&2
+            echo "Warning: No .bottle.json files found in bottles/bottle-*/*.bottle.json" >&2
           fi
           
           BOTTLE_BLOCK="${BOTTLE_BLOCK}\n  end"
