@@ -163,7 +163,7 @@ jobs:
           
           # Insert bottle block after license line
           awk -v bottle="$BOTTLE_BLOCK" '
-            /license ".*"/ { print; print ""; print bottle; next }
+            /license ".*"/ { print; print ""; printf "%b\n", bottle; next }
             { print }
           ' copilot-cli.rb > copilot-cli.rb.tmp
           mv copilot-cli.rb.tmp copilot-cli.rb
