@@ -92,17 +92,10 @@ jobs:
         id: set-up-homebrew
         uses: Homebrew/actions/setup-homebrew@master
 
-      - name: Setup local tap
-        run: |
-          # Create a local tap directory structure
-          mkdir -p $(brew --repository)/Library/Taps/thoom/homebrew-copilot-cli
-          # Copy the updated formula to the tap location
-          cp copilot-cli.rb $(brew --repository)/Library/Taps/thoom/homebrew-copilot-cli/
-
       - name: Build bottle
         run: |
-          brew install --build-bottle thoom/copilot-cli/copilot-cli
-          brew bottle --json --no-rebuild thoom/copilot-cli/copilot-cli
+          brew install --build-bottle ./copilot-cli.rb
+          brew bottle --json --no-rebuild ./copilot-cli.rb
 
       - name: Upload bottle artifact
         uses: actions/upload-artifact@v4
@@ -144,20 +137,28 @@ jobs:
           cp formula-temp/copilot-cli.rb copilot-cli.rb
           
           # Create bottle block
-          BOTTLE_BLOCK="  bottle do\n    root_url \"https://github.com/thoom/homebrew-copilot-cli/releases/download/v${VERSION}\""
+          BOTTLE_BLOCK="  bottle do\n    root_url \"https://github.com/${{ github.repository }}/releases/download/v${VERSION}\""
           
           # Add checksums from each platform
-          for dir in bottles/bottle-*; do
-            if [ -f "$dir"/*.bottle.json ]; then
-              JSON_FILE="$dir"/*.bottle.json
+          found_json=0
+          for JSON_FILE in bottles/bottle-*/*.bottle.json; do
+            if [ -f "$JSON_FILE" ]; then
+              found_json=1
               
-              # Extract platform tag and sha256 from JSON
-              TAG=$(jq -r 'to_entries[0].value.bottle.tags | to_entries[0].key' "$JSON_FILE")
-              SHA=$(jq -r 'to_entries[0].value.bottle.tags | to_entries[0].value.sha256' "$JSON_FILE")
+              # Extract the top-level key (e.g., "copilot-cli")
+              TOP_KEY=$(jq -r 'keys[0]' "$JSON_FILE")
+              
+              # Extract platform tag and sha256 from JSON using explicit paths
+              TAG=$(jq -r --arg key "$TOP_KEY" '.[$key].bottle.tags | keys[0]' "$JSON_FILE")
+              SHA=$(jq -r --arg key "$TOP_KEY" '.[$key].bottle.tags[] | .sha256' "$JSON_FILE")
               
               BOTTLE_BLOCK="${BOTTLE_BLOCK}\n    sha256 cellar: :any_skip_relocation, ${TAG}: \"${SHA}\""
             fi
           done
+          
+          if [ "$found_json" -eq 0 ]; then
+            echo "Warning: No .bottle.json file found in $dir" >&2
+          fi
           
           BOTTLE_BLOCK="${BOTTLE_BLOCK}\n  end"
           
