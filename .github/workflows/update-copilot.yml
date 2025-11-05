@@ -15,6 +15,9 @@ permissions:
 jobs:
   update:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.npm.outputs.version }}
+      updated: ${{ steps.check.outputs.updated }}
     steps:
       - name: Checkout your tap
         uses: actions/checkout@v4
@@ -38,28 +41,154 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Update formula file
+        id: check
         run: |
           # Get current version from formula
           CURRENT_VERSION=$(grep 'version "' copilot-cli.rb | cut -d'"' -f2)
 
           if [ "$CURRENT_VERSION" != "${{ steps.npm.outputs.version }}" ]; then
+            # Remove old bottle block if it exists
+            sed -i -e '/^  bottle do$/,/^  end$/d' copilot-cli.rb
+            
+            # Update source info
             sed -i -e 's|url ".*"|url "${{ steps.npm.outputs.url }}"|' \
                    -e 's|sha256 ".*"|sha256 "${{ steps.npm.outputs.sha }}"|' \
                    -e 's|version ".*"|version "${{ steps.npm.outputs.version }}"|' \
                    copilot-cli.rb
+            echo "updated=true" >> $GITHUB_OUTPUT
           else
             echo "Formula is already up-to-date."
+            echo "updated=false" >> $GITHUB_OUTPUT
             exit 0
           fi
+      
+      - name: Upload updated formula
+        if: steps.check.outputs.updated == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: updated-formula
+          path: copilot-cli.rb
 
-      - name: Commit changes
+  bottle:
+    needs: update
+    if: needs.update.outputs.updated == 'true'
+    strategy:
+      matrix:
+        os:
+          - macos-13      # Intel
+          - macos-14      # Apple Silicon
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+      - name: Checkout tap
+        uses: actions/checkout@v4
+
+      - name: Download updated formula
+        uses: actions/download-artifact@v4
+        with:
+          name: updated-formula
+
+      - name: Set up Homebrew
+        id: set-up-homebrew
+        uses: Homebrew/actions/setup-homebrew@master
+
+      - name: Setup local tap
+        run: |
+          # Create a local tap directory structure
+          mkdir -p $(brew --repository)/Library/Taps/thoom/homebrew-copilot-cli
+          # Copy the updated formula to the tap location
+          cp copilot-cli.rb $(brew --repository)/Library/Taps/thoom/homebrew-copilot-cli/
+
+      - name: Build bottle
+        run: |
+          brew install --build-bottle thoom/copilot-cli/copilot-cli
+          brew bottle --json --no-rebuild thoom/copilot-cli/copilot-cli
+
+      - name: Upload bottle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bottle-${{ matrix.os }}
+          path: |
+            copilot-cli--*.bottle*.tar.gz
+            copilot-cli--*.bottle.json
+
+      - name: Output bottle JSON
+        run: |
+          echo "Bottle JSON for ${{ matrix.os }}:"
+          cat copilot-cli--*.bottle.json
+
+  finalize:
+    needs: [update, bottle]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tap
+        uses: actions/checkout@v4
+
+      - name: Download updated formula
+        uses: actions/download-artifact@v4
+        with:
+          name: updated-formula
+          path: formula-temp
+
+      - name: Download bottle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bottle-*
+          path: bottles
+
+      - name: Extract bottle info and update formula
+        run: |
+          VERSION="${{ needs.update.outputs.version }}"
+          
+          # Start with the updated formula
+          cp formula-temp/copilot-cli.rb copilot-cli.rb
+          
+          # Create bottle block
+          BOTTLE_BLOCK="  bottle do\n    root_url \"https://github.com/thoom/homebrew-copilot-cli/releases/download/v${VERSION}\""
+          
+          # Add checksums from each platform
+          for dir in bottles/bottle-*; do
+            if [ -f "$dir"/*.bottle.json ]; then
+              JSON_FILE="$dir"/*.bottle.json
+              
+              # Extract platform tag and sha256 from JSON
+              TAG=$(jq -r 'to_entries[0].value.bottle.tags | to_entries[0].key' "$JSON_FILE")
+              SHA=$(jq -r 'to_entries[0].value.bottle.tags | to_entries[0].value.sha256' "$JSON_FILE")
+              
+              BOTTLE_BLOCK="${BOTTLE_BLOCK}\n    sha256 cellar: :any_skip_relocation, ${TAG}: \"${SHA}\""
+            fi
+          done
+          
+          BOTTLE_BLOCK="${BOTTLE_BLOCK}\n  end"
+          
+          # Insert bottle block after license line
+          awk -v bottle="$BOTTLE_BLOCK" '
+            /license ".*"/ { print; print ""; print bottle; next }
+            { print }
+          ' copilot-cli.rb > copilot-cli.rb.tmp
+          mv copilot-cli.rb.tmp copilot-cli.rb
+
+      - name: Commit and push changes
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add copilot-cli.rb
-          git commit -m "copilot: update to ${{ steps.npm.outputs.version }}"
+          git commit -m "copilot: update to ${{ needs.update.outputs.version }} with bottles"
           
-          # Authenticate to the remote repository using the GITHUB_TOKEN
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
-
           git push origin HEAD
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.update.outputs.version }}
+          name: Release v${{ needs.update.outputs.version }}
+          body: |
+            Updated copilot-cli to version ${{ needs.update.outputs.version }}
+            
+            Bottles available for:
+            - macOS 13 (Intel)
+            - macOS 14 (Apple Silicon)
+          files: bottles/bottle-*/*.bottle*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
