@@ -4,9 +4,9 @@ require "language/node"
 class CopilotCli < Formula
   desc "GitHub Copilot CLI"
   homepage "https://github.com/github/copilot-cli"
-  url "https://registry.npmjs.org/@github/copilot/-/copilot-1.0.39.tgz"
-  sha256 "6cf15a586c7e28b47762453a2dc36cb99e00c7db51d34ec71c4b2c8ad023067f"
-  version "1.0.39"
+  url "https://registry.npmjs.org/@github/copilot/-/copilot-1.0.40.tgz"
+  sha256 "cbe7c54a4893239424754800becbca0578e29c2439cc8594ae20ce77f289791f"
+  version "1.0.40"
   license "MIT"
 
   depends_on "node"
